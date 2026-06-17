@@ -6,6 +6,7 @@ import type { ExtractionResult, DesignReport } from "../core/types.js";
 import type { FusionReport } from "../core/fuse.js";
 import { blendTokens } from "../core/fuse.js";
 import { LlmClient } from "../llm/client.js";
+import { chromium } from "playwright";
 
 const SYSTEM = `You are an expert front-end engineer. You generate a single-file React
 homepage (default export) that recreates the VISUAL STYLE of a reference site as an
@@ -26,42 +27,71 @@ export async function buildSite(
   r: DesignReport,
   llm: LlmClient,
   onStep: (m: string) => void,
-  instructions?: string
+  instructions?: string,
+  refineRounds = 2
 ): Promise<void> {
-  onStep("Asking the model to compose a same-style page");
+  // Download reference assets FIRST so the model can reference real local files.
+  onStep("Downloading reference assets");
+  const localAssets = await downloadAssets(outDir, x, onStep);
+
   const slim = {
     title: x.title,
     lang: x.lang,
     tokens: {
       bg: x.tokens.bodyBackground,
       fg: x.tokens.bodyColor,
-      palette: x.tokens.palette.slice(0, 10),
+      palette: x.tokens.palette.slice(0, 12),
       fonts: x.tokens.fontFamilies.slice(0, 4),
       googleFonts: x.tokens.googleFonts,
       radii: x.tokens.radii,
+      shadows: x.tokens.shadows.slice(0, 3),
       headingSizes: x.tokens.headingSizes,
     },
-    sections: x.sections.map((s) => ({
-      name: s.name,
-      layout: s.layout,
-      interaction: s.interaction,
-      text: s.textPreview,
+    sections: x.sections.map((sec) => ({
+      name: sec.name,
+      layout: sec.layout,
+      display: sec.display,
+      gridTemplateColumns: sec.gridTemplateColumns,
+      flexDirection: sec.flexDirection,
+      columns: sec.columnCount,
+      gap: sec.gap,
+      padding: sec.paddingPx,
+      background: sec.background,
+      images: sec.imageCount,
+      interaction: sec.interaction,
+      states: sec.states,
+      heightPx: sec.height,
+      text: sec.textPreview,
     })),
+    smoothScroll: x.smoothScroll,
     vibe: r.vibe,
-    summary: r.summary,
   };
 
-  const extra = instructions && instructions.trim()
-    ? `\n\nUSER CUSTOMIZATION (apply these; do NOT copy the original text/brand verbatim):\n${instructions.trim()}`
-    : "\n\nUse fresh placeholder copy in the same language/topic; do not copy the original's exact wording or brand names.";
+  const assetList = localAssets.length
+    ? localAssets.map((a) => `/assets/${a.local}  (${a.kind})`).join("\n")
+    : "(none downloaded — use tasteful CSS gradients/placeholders instead)";
 
-  const user = `Reference design (style only, build an ORIGINAL same-style homepage):
-${JSON.stringify(slim, null, 2)}${extra}
+  const extra = instructions && instructions.trim()
+    ? `\n\nUSER CUSTOMIZATION (apply, but keep the visual style): ${instructions.trim()}`
+    : "\n\nUse fresh original placeholder copy in the same language/topic; do NOT copy the original brand names or exact wording.";
+
+  onStep("Composing the same-style page (driven by the design prompt)");
+  const user = `PRIMARY DIRECTIVE — build this page to match this design brief exactly:
+"""
+${r.sameStylePrompt || r.summary}
+"""
+
+PRECISE EXTRACTED LAYOUT & TOKENS (honor section order, column counts, gaps, padding, colors, fonts):
+${JSON.stringify(slim, null, 2)}
+
+LOCAL ASSETS available under /assets/ (use these real images where the section has imagery):
+${assetList}
+${extra}
 
 Return JSON:
 {
-  "pageTsx": "full source of src/app/page.tsx (a default-exported React component, 'use client' at top, inline Tailwind classes, recreating the sections + style)",
-  "globalsCss": "contents of src/app/globals.css starting with @import \"tailwindcss\"; plus :root css variables for the extracted colors and any @font-face/keyframes"
+  \"pageTsx\": \"full source of src/app/page.tsx (default-exported React component, 'use client' at top, inline Tailwind classes, recreating EVERY section in order with the exact column counts/spacing/colors; use <img src=\\\"/assets/...\\\"> for imagery)\",
+  \"globalsCss\": \"src/app/globals.css starting with @import \\\"tailwindcss\\\"; plus :root variables for the extracted colors and any keyframes\"
 }`;
 
   const gen = await llm.json<GenResult>(SYSTEM, user);
@@ -69,8 +99,10 @@ Return JSON:
   onStep("Scaffolding Next.js project");
   scaffold(outDir, x, gen);
 
-  onStep("Downloading reference assets");
-  await downloadAssets(outDir, x, onStep);
+  // Screenshot-based self-iteration: render our page, compare to the original, fix.
+  if (refineRounds > 0 && x.screenshots && x.screenshots.desktop) {
+    await refineWithScreenshots(outDir, x, gen, llm, onStep, refineRounds);
+  }
 }
 
 function scaffold(outDir: string, x: ExtractionResult, gen: GenResult) {
@@ -133,23 +165,30 @@ async function downloadAssets(
   outDir: string,
   x: ExtractionResult,
   onStep: (m: string) => void
-) {
+): Promise<{ remote: string; local: string; kind: string }[]> {
   const dir = path.join(outDir, "public", "assets");
   fs.mkdirSync(dir, { recursive: true });
   const imgs = x.assets
-    .filter((a) => a.kind === "image" || a.kind === "background")
-    .slice(0, 20);
+    .filter((a) => a.kind === "image" || a.kind === "background" || a.kind === "logo")
+    .slice(0, 24);
+  const out: { remote: string; local: string; kind: string }[] = [];
+  const used = new Set<string>();
   let ok = 0;
   for (const a of imgs) {
     try {
-      const name = a.src.split("?")[0].split("/").pop() || "asset";
+      let name = (a.src.split("?")[0].split("/").pop() || "asset").replace(/[^a-z0-9._-]/gi, "_");
+      if (!/.[a-z0-9]{2,5}$/i.test(name)) name += ".img";
+      while (used.has(name)) name = "_" + name;
+      used.add(name);
       await download(a.src, path.join(dir, name), x.finalUrl);
+      out.push({ remote: a.src, local: name, kind: a.kind });
       ok++;
     } catch {
-      /* skip */
+      /* skip unreachable assets */
     }
   }
-  onStep(`Downloaded ${ok}/${imgs.length} reference images`);
+  onStep(`Downloaded ${ok}/${imgs.length} reference assets`);
+  return out;
 }
 
 function download(url: string, dest: string, referer: string): Promise<void> {
@@ -174,6 +213,83 @@ function download(url: string, dest: string, referer: string): Promise<void> {
 }
 
 
+const REFINE_SYSTEM = `You are a meticulous front-end engineer doing visual QA.
+You are shown TWO screenshots: (1) the ORIGINAL reference site, (2) the CURRENT generated page.
+Identify concrete visual differences (layout, spacing, colors, type scale, section order, missing blocks)
+and return a corrected, COMPLETE page. Keep it a single default-exported React component with inline
+Tailwind classes. Do not regress anything that already matches. Output ONLY JSON.`;
+
+/** Render a generated React component to a screenshot via Babel + Tailwind CDN (no npm install). */
+async function renderPreviewToScreenshot(pageTsx: string, globalsCss: string): Promise<string> {
+  // Strip TS/Next-isms that break in-browser Babel; keep it best-effort.
+  let code = pageTsx
+    .replace(/^\s*['\"]use client['\"];?\s*$/m, "")
+    .replace(/^\s*import[^;]*;\s*$/gm, "")
+    .replace(/export\s+default\s+function/, "function App_DF")
+    .replace(/export\s+default\s+/, "const App_DF = ");
+  if (!/function App_DF|const App_DF/.test(code)) code += "\nconst App_DF = () => null;";
+  const cssInline = (globalsCss || "").replace(/@import[^;]+;/g, "");
+  const doc = `<!doctype html><html><head><meta charset=\"utf-8\">` +
+    `<script src=\"https://cdn.tailwindcss.com\"></script>` +
+    `<script src=\"https://unpkg.com/react@18/umd/react.production.min.js\"></script>` +
+    `<script src=\"https://unpkg.com/react-dom@18/umd/react-dom.production.min.js\"></script>` +
+    `<script src=\"https://unpkg.com/@babel/standalone/babel.min.js\"></script>` +
+    `<style>${cssInline}</style></head><body><div id=\"root\"></div>` +
+    `<script type=\"text/babel\" data-presets=\"react\">${code}\n` +
+    `ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App_DF));</script>` +
+    `</body></html>`;
+  let browser = null;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.setContent(doc, { waitUntil: "networkidle", timeout: 30000 });
+    await page.waitForTimeout(1500);
+    const buf = await page.screenshot({ fullPage: true, type: "jpeg", quality: 60 });
+    return "data:image/jpeg;base64," + buf.toString("base64");
+  } finally {
+    if (browser) await browser.close();
+  }
+}
+
+/** Compare our render to the original screenshot and let the model fix the page, N rounds. */
+async function refineWithScreenshots(
+  outDir: string,
+  x: ExtractionResult,
+  gen: GenResult,
+  llm: LlmClient,
+  onStep: (m: string) => void,
+  rounds: number
+): Promise<void> {
+  const original = x.screenshots?.desktop;
+  if (!original) return;
+  let current = gen;
+  for (let i = 1; i <= rounds; i++) {
+    let mine = "";
+    try {
+      onStep(`Self-check round ${i}/${rounds}: rendering preview`);
+      mine = await renderPreviewToScreenshot(current.pageTsx, current.globalsCss);
+    } catch {
+      onStep(`Self-check round ${i}: preview render skipped`);
+      return; // can't render -> stop refining quietly
+    }
+    try {
+      onStep(`Self-check round ${i}/${rounds}: comparing with original & fixing`);
+      const user = `Image 1 = ORIGINAL reference. Image 2 = CURRENT generated page.\n` +
+        `Fix the CURRENT page so it matches the ORIGINAL more closely (layout, spacing, colors, section order).\n` +
+        `Return JSON { \"pageTsx\": \"...\", \"globalsCss\": \"...\" } with the FULL corrected files.`;
+      const fixed = await llm.jsonWithImages<GenResult>(REFINE_SYSTEM, user, [original, mine]);
+      if (fixed && fixed.pageTsx && fixed.pageTsx.length > 200) {
+        current = fixed;
+        scaffold(outDir, x, current);
+      }
+    } catch (e) {
+      onStep(`Self-check round ${i}: skipped (${e instanceof Error ? e.message.slice(0, 60) : "error"})`);
+      return;
+    }
+  }
+  onStep("Self-iteration complete");
+}
+
 export async function buildFusionSite(
   outDir: string,
   a: ExtractionResult,
@@ -196,8 +312,12 @@ export async function buildFusionSite(
   const extra = instructions && instructions.trim()
     ? `\n\nUSER CUSTOMIZATION:\n${instructions.trim()}`
     : "\n\nUse fresh original placeholder copy; do not copy either site's exact wording or brand.";
-  const user = `Build ONE original homepage that FUSES the two reference sites below,
-honoring the blend weight. Use the blendedTokens as the basis for color/fonts.
+  const user = `PRIMARY DIRECTIVE — build this fused page to match this design brief exactly:
+"""
+${report.sameStylePrompt || report.summary}
+"""
+
+BLEND DATA (honor the weight; use blendedTokens for color/fonts; merge both sites' section rhythm):
 ${JSON.stringify(slim, null, 2)}${extra}
 
 Return JSON:
@@ -217,4 +337,9 @@ Return JSON:
 
   onStep("Downloading reference assets");
   await downloadAssets(outDir, merged, onStep);
+
+  // Self-iteration against site A's screenshot as the primary visual anchor.
+  if (a.screenshots && a.screenshots.desktop) {
+    await refineWithScreenshots(outDir, merged, gen, llm, onStep, 1);
+  }
 }

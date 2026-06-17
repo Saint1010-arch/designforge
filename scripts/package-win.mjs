@@ -2,7 +2,7 @@
  * Build an offline, double-click-to-run release bundle for Windows.
  *
  * Output layout (zipped):
- *   siteforge-win/
+ *   designforge-win/
  *     启动.bat
  *     runtime/node.exe              (portable Node)
  *     app/dist, app/public-ui, app/templates, app/node_modules (prod deps only)
@@ -24,7 +24,7 @@ const NODE_ZIP = "node-" + NODE_VERSION + "-win-x64.zip";
 const NODE_URL = "https://nodejs.org/dist/" + NODE_VERSION + "/" + NODE_ZIP;
 
 const BUILD = path.join(ROOT, "release");
-const STAGE = path.join(BUILD, "siteforge-win");
+const STAGE = path.join(BUILD, "designforge-win");
 
 function sh(cmd, opts = {}) { console.log("> " + cmd); execSync(cmd, { stdio: "inherit", ...opts }); }
 function rmrf(p) { fs.rmSync(p, { recursive: true, force: true }); }
@@ -46,7 +46,7 @@ function download(url, dest) {
 }
 
 async function main() {
-  console.log("\n=== siteforge Windows packager ===\n");
+  console.log("\n=== DesignForge Windows packager ===\n");
   rmrf(BUILD);
   fs.mkdirSync(STAGE, { recursive: true });
 
@@ -63,7 +63,7 @@ async function main() {
 
   // prod-only node_modules via clean install in a temp copy
   console.log("\n-- installing production dependencies --");
-  const tmp = path.join(os.tmpdir(), "siteforge-prod-" + Date.now());
+  const tmp = path.join(os.tmpdir(), "designforge-prod-" + Date.now());
   fs.mkdirSync(tmp, { recursive: true });
   fs.copyFileSync(path.join(ROOT, "package.json"), path.join(tmp, "package.json"));
   if (fs.existsSync(path.join(ROOT, "package-lock.json"))) fs.copyFileSync(path.join(ROOT, "package-lock.json"), path.join(tmp, "package-lock.json"));
@@ -100,7 +100,7 @@ async function main() {
 
   // 6) zip
   console.log("\n-- zipping --");
-  const zipOut = path.join(BUILD, "siteforge-win.zip");
+  const zipOut = path.join(BUILD, "designforge-win.zip");
   sh('powershell -NoProfile -Command "Compress-Archive -Force -Path \'' + STAGE + '\' -DestinationPath \'' + zipOut + '\'"');
 
   const sizeMB = (fs.statSync(zipOut).size / 1024 / 1024).toFixed(0);

@@ -1,6 +1,8 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { spawn, type ChildProcess } from "node:child_process";
+import { chromium } from "playwright";
 import { fileURLToPath } from "node:url";
 import { extractSite } from "../core/extract.js";
 import { generateReport } from "../core/report.js";
@@ -15,6 +17,41 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // public dir is shipped next to dist/ -> ../../public from dist/server
 const PUBLIC_DIR = path.resolve(__dirname, "..", "..", "public-ui");
 const OUT_DIR = path.resolve(process.cwd(), "designforge-out");
+
+// Track one running preview dev-server at a time.
+interface PreviewProc { proc: ChildProcess; port: number; dir: string; }
+let preview: PreviewProc | null = null;
+
+function npmBin(): string {
+  // Use the same Node that runs this server; resolve npm-cli.js next to it.
+  const dir = path.dirname(process.execPath);
+  const candidates = [
+    path.join(dir, "node_modules", "npm", "bin", "npm-cli.js"),
+    path.join(dir, "node_modules", "npm", "bin", "npm-cli.js"),
+  ];
+  for (const c of candidates) if (fs.existsSync(c)) return c;
+  return ""; // fall back to "npm" on PATH
+}
+
+function runNpm(args: string[], cwd: string, onLine: (l: string) => void): Promise<number> {
+  return new Promise((resolve) => {
+    const cli = npmBin();
+    const proc = cli
+      ? spawn(process.execPath, [cli, ...args], { cwd, env: process.env })
+      : spawn("npm", args, { cwd, shell: true, env: process.env });
+    proc.stdout?.on("data", (d) => onLine(String(d).trim()));
+    proc.stderr?.on("data", (d) => onLine(String(d).trim()));
+    proc.on("close", (code) => resolve(code ?? 0));
+    proc.on("error", () => resolve(1));
+  });
+}
+
+function safeProjectDir(dir: string): string {
+  const abs = path.resolve(dir);
+  if (!abs.startsWith(OUT_DIR)) throw new Error("项目目录不在输出路径内，已拒绝。");
+  if (!fs.existsSync(path.join(abs, "package.json"))) throw new Error("该目录不是一个生成的项目。");
+  return abs;
+}
 
 interface SseRes extends http.ServerResponse {}
 
@@ -236,6 +273,64 @@ export function startServer(port: number): Promise<number> {
       } catch (e) { s.error(errMsg(e)); }
       return;
     }
+    // ---- API: preview a generated project (npm install + next dev), opens a port ----
+    if (req.method === "POST" && url.pathname === "/api/preview") {
+      const body = await readBody(req);
+      const s = sse(res);
+      try {
+        const dir = safeProjectDir(String(body.projectDir));
+        // stop any prior preview
+        if (preview) { try { preview.proc.kill(); } catch { /* ignore */ } preview = null; }
+        if (!fs.existsSync(path.join(dir, "node_modules"))) {
+          s.step("\u9996\u6b21\u9884\u89c8\uff1a\u6b63\u5728\u5b89\u88c5\u4f9d\u8d56 (npm install)\uff0c\u8bf7\u7a0d\u5019\u2026");
+          const code = await runNpm(["install", "--no-audit", "--no-fund"], dir, (l) => { if (l) s.step(l.slice(0, 100)); });
+          if (code !== 0) { s.error("npm install \u5931\u8d25\uff0c\u8bf7\u786e\u8ba4\u7f51\u7edc\u53ef\u7528\u3002"); return; }
+        }
+        const devPort = 3000 + Math.floor(Math.random() * 400);
+        s.step("\u542f\u52a8\u5f00\u53d1\u670d\u52a1\u5668 (next dev) \u2026");
+        const cli = npmBin();
+        const proc = cli
+          ? spawn(process.execPath, [cli, "run", "dev", "--", "-p", String(devPort)], { cwd: dir, env: process.env })
+          : spawn("npm", ["run", "dev", "--", "-p", String(devPort)], { cwd: dir, shell: true, env: process.env });
+        preview = { proc, port: devPort, dir };
+        let ready = false;
+        const onData = (d: Buffer | string) => {
+          const line = String(d);
+          if (!ready && /(Local:|ready|started server|compiled)/i.test(line)) {
+            ready = true;
+            s.done({ url: "http://localhost:" + devPort, port: devPort });
+          }
+        };
+        proc.stdout?.on("data", onData);
+        proc.stderr?.on("data", onData);
+        proc.on("error", () => { if (!ready) s.error("\u542f\u52a8\u5931\u8d25\u3002"); });
+        // safety: if it never reports ready, resolve after a delay assuming it booted
+        setTimeout(() => { if (!ready) { ready = true; s.done({ url: "http://localhost:" + devPort, port: devPort }); } }, 20000);
+      } catch (e) { s.error(errMsg(e)); }
+      return;
+    }
+
+    // ---- API: stop the running preview ----
+    if (req.method === "POST" && url.pathname === "/api/preview-stop") {
+      if (preview) { try { preview.proc.kill(); } catch { /* ignore */ } preview = null; }
+      res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+      res.end(JSON.stringify({ stopped: true }));
+      return;
+    }
+
+    // ---- API: export a generated project to a single double-clickable HTML ----
+    if (req.method === "POST" && url.pathname === "/api/export-html") {
+      const body = await readBody(req);
+      const s = sse(res);
+      try {
+        const dir = safeProjectDir(String(body.projectDir));
+        s.step("\u5bfc\u51fa\u9759\u6001 HTML\uff08\u53ef\u53cc\u51fb\u6253\u5f00\uff09\u2026");
+        const file = await exportProjectToHtml(dir, s.step);
+        s.done({ file });
+      } catch (e) { s.error(errMsg(e)); }
+      return;
+    }
+
     // ---- static UI ----
     serveStatic(url.pathname, res);
   });
@@ -243,6 +338,53 @@ export function startServer(port: number): Promise<number> {
   return new Promise((resolve) => {
     server.listen(port, () => resolve(port));
   });
+}
+
+/** Render a generated project's page into one self-contained, double-clickable HTML file. */
+async function exportProjectToHtml(dir: string, step: (m: string) => void): Promise<string> {
+  const pageTsxPath = path.join(dir, "src", "app", "page.tsx");
+  const cssPath = path.join(dir, "src", "app", "globals.css");
+  const pageTsx = fs.existsSync(pageTsxPath) ? fs.readFileSync(pageTsxPath, "utf8") : "";
+  const css = fs.existsSync(cssPath) ? fs.readFileSync(cssPath, "utf8") : "";
+  let code = pageTsx
+    .replace(/^\s*['\"]use client['\"];?\s*$/m, "")
+    .replace(/^\s*import[^;]*;\s*$/gm, "")
+    .replace(/export\s+default\s+function/, "function App_DF")
+    .replace(/export\s+default\s+/, "const App_DF = ");
+  if (!/function App_DF|const App_DF/.test(code)) code += "\nconst App_DF = () => null;";
+  const cssInline = css.replace(/@import[^;]+;/g, "");
+  const doc = "<!doctype html><html><head><meta charset=\"utf-8\">" +
+    "<script src=\"https://cdn.tailwindcss.com\"></script>" +
+    "<script src=\"https://unpkg.com/react@18/umd/react.production.min.js\"></script>" +
+    "<script src=\"https://unpkg.com/react-dom@18/umd/react-dom.production.min.js\"></script>" +
+    "<script src=\"https://unpkg.com/@babel/standalone/babel.min.js\"></script>" +
+    "<style>" + cssInline + "</style></head><body><div id=\"root\"></div>" +
+    "<script type=\"text/babel\" data-presets=\"react\">" + code + "\n" +
+    "ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App_DF));</script>" +
+    "</body></html>";
+  let browser = null;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.setContent(doc, { waitUntil: "networkidle", timeout: 30000 });
+    await page.waitForTimeout(1500);
+    // Snapshot the fully-rendered DOM and inline the compiled Tailwind so it works offline-ish.
+    const rendered = await page.evaluate(() => {
+      const html = document.documentElement.outerHTML;
+      return html;
+    });
+    step("\u6e32\u67d3\u5b8c\u6210\uff0c\u5199\u5165\u6587\u4ef6");
+    fs.mkdirSync(OUT_DIR, { recursive: true });
+    const out = path.join(OUT_DIR, path.basename(dir) + "-export-" + Date.now() + ".html");
+    // keep the Tailwind CDN so utility classes still apply when opened directly
+    const finalDoc = rendered.includes("cdn.tailwindcss.com")
+      ? "<!doctype html>\n" + rendered
+      : "<!doctype html>\n<html><head><meta charset=\"utf-8\"><script src=\"https://cdn.tailwindcss.com\"></script><style>" + cssInline + "</style></head>" + rendered.replace(/^[\s\S]*?<body/i, "<body");
+    fs.writeFileSync(out, finalDoc, "utf8");
+    return out;
+  } finally {
+    if (browser) await browser.close();
+  }
 }
 
 function serveStatic(pathname: string, res: http.ServerResponse) {

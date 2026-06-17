@@ -179,8 +179,39 @@
   }
   function doneBanner(projectDir){
     if(!projectDir) return "";
-    return '<div class="r-card"><div class="done-banner"><span class="ic">✓</span><div><div style="font-weight:600">同款项目已生成</div><div class="path">'+esc(projectDir)+'</div></div></div>'
-      + '<div class="run-cmd">进入目录后运行：<code>npm install</code> 然后 <code>npm run dev</code></div></div>';
+    var pd = esc(projectDir);
+    return '<div class="r-card" data-project="'+pd+'"><div class="done-banner"><span class="ic">✓</span><div><div style="font-weight:600">同款项目已生成</div><div class="path">'+pd+'</div></div></div>'
+      + '<div class="preview-actions">'
+      +   '<button class="btn-primary act-preview" type="button">▶ 预览网站</button>'
+      +   '<button class="btn-ghost act-export" type="button">💾 导出可双击 HTML</button>'
+      + '</div>'
+      + '<div class="preview-status hidden"></div>'
+      + '<div class="run-cmd">或手动：进入目录后运行 <code>npm install</code> 然后 <code>npm run dev</code></div></div>';
+  }
+  function bindPreview(root){
+    $(".r-card[data-project]", root).forEach(function(card){
+      var dir = card.getAttribute("data-project");
+      var status = card.querySelector(".preview-status");
+      var setStatus = function(msg, kind){ status.classList.remove("hidden"); status.className = "preview-status" + (kind?" "+kind:""); status.innerHTML = msg; };
+      var pv = card.querySelector(".act-preview");
+      var ex = card.querySelector(".act-export");
+      if(pv) pv.onclick = function(){
+        pv.disabled = true; setStatus("正在准备预览（首次会装依赖，请耐心等）…");
+        stream("/api/preview", {projectDir: dir},
+          function(m){ setStatus("⏳ "+esc(m)); },
+          function(d){ pv.disabled=false; if(d&&d.url){ setStatus('✓ 预览已启动：<a href="'+d.url+'" target="_blank">'+d.url+'</a>', "ok"); try{ window.open(d.url, "_blank"); }catch(e){} } else { setStatus("预览已启动。", "ok"); } },
+          function(e){ pv.disabled=false; setStatus("出错："+esc(e), "err"); }
+        ).catch(function(e){ pv.disabled=false; setStatus("出错："+esc(e.message), "err"); });
+      };
+      if(ex) ex.onclick = function(){
+        ex.disabled = true; setStatus("正在导出静态 HTML…");
+        stream("/api/export-html", {projectDir: dir},
+          function(m){ setStatus("⏳ "+esc(m)); },
+          function(d){ ex.disabled=false; setStatus('✓ 已导出：<span class="path">'+esc(d.file||"")+'</span>（双击该文件即可打开）', "ok"); },
+          function(e){ ex.disabled=false; setStatus("出错："+esc(e), "err"); }
+        ).catch(function(e){ ex.disabled=false; setStatus("出错："+esc(e.message), "err"); });
+      };
+    });
   }
   function bindCopy(root){
     $$(".copy-btn", root).forEach(b=> b.onclick = () => {
@@ -218,7 +249,7 @@
     $("#cloneResult").innerHTML="";
     stream("/api/clone", {url, instructions, ...cfg},
       m=>addStep(ul,m),
-      d=>{ $("#cloneProgress").classList.add("hidden"); $("#cloneResult").innerHTML=reportCard(d.extraction,d.report)+doneBanner(d.projectDir); bindCopy($("#cloneResult")); btn.disabled=false; },
+      d=>{ $("#cloneProgress").classList.add("hidden"); $("#cloneResult").innerHTML=reportCard(d.extraction,d.report)+doneBanner(d.projectDir); bindCopy($("#cloneResult")); bindPreview($("#cloneResult")); btn.disabled=false; },
       e=>{ $("#cloneProgress").classList.add("hidden"); showErr($("#cloneResult"),e); btn.disabled=false; }
     ).catch(e=>{ showErr($("#cloneResult"),e.message); btn.disabled=false; });
   };
@@ -265,7 +296,7 @@
     $("#fuseResult").innerHTML="";
     stream("/api/fuse", {urlA, urlB, weight:+weight.value, instructions, build:true, ...cfg},
       m=>addStep(ul,m),
-      d=>{ $("#fuseProgress").classList.add("hidden"); $("#fuseResult").innerHTML=fusionCard(d)+doneBanner(d.projectDir); bindCopy($("#fuseResult")); btn.disabled=false; },
+      d=>{ $("#fuseProgress").classList.add("hidden"); $("#fuseResult").innerHTML=fusionCard(d)+doneBanner(d.projectDir); bindCopy($("#fuseResult")); bindPreview($("#fuseResult")); btn.disabled=false; },
       e=>{ $("#fuseProgress").classList.add("hidden"); showErr($("#fuseResult"),e); btn.disabled=false; }
     ).catch(e=>{ showErr($("#fuseResult"),e.message); btn.disabled=false; });
   };

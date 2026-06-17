@@ -47,6 +47,23 @@ export async function extractSite(
     step("Discovering assets");
     const assets = (await page.evaluate(assetScript)) as AssetRef[];
 
+    step("Capturing desktop screenshot (1440)");
+    let shotDesktop = "";
+    let shotMobile = "";
+    try {
+      const buf = await page.screenshot({ fullPage: true, type: "jpeg", quality: 60 });
+      shotDesktop = "data:image/jpeg;base64," + buf.toString("base64");
+    } catch { /* screenshots are best-effort */ }
+    try {
+      step("Capturing mobile screenshot (390)");
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.waitForTimeout(600);
+      const bufm = await page.screenshot({ fullPage: true, type: "jpeg", quality: 55 });
+      shotMobile = "data:image/jpeg;base64," + bufm.toString("base64");
+      await page.setViewportSize(DESKTOP);
+      await page.waitForTimeout(300);
+    } catch { /* best-effort */ }
+
     step("Detecting smooth-scroll & metadata");
     const meta = (await page.evaluate(metaScript)) as {
       title: string; description: string; lang: string; pageHeight: number;
@@ -69,6 +86,7 @@ export async function extractSite(
       videoCount: meta.videoCount,
       navLinks: meta.navLinks,
       extractedAt: new Date().toISOString(),
+      screenshots: { desktop: shotDesktop || undefined, mobile: shotMobile || undefined },
     };
     return result;
   } finally {
@@ -153,7 +171,7 @@ async function triggerLazyLoad(page: Page) {
   });
 }
 
-// ---- in-page scripts (ported from site-clone skill) ----
+// ---- in-page extraction scripts (run inside the headless browser) ----
 
 function tokenScript(): unknown {
   const cs = getComputedStyle(document.body);
@@ -272,6 +290,14 @@ function topologyScript(): unknown {
       : c.querySelector("button,[role=tab]")
       ? "click"
       : "static";
+    const colCount = layout === "grid"
+      ? (s.gridTemplateColumns ? s.gridTemplateColumns.split(" ").filter(Boolean).length : 0)
+      : layout === "flex"
+      ? Array.from(c.children).filter((ch) => (ch as HTMLElement).getBoundingClientRect().width > 40).length
+      : 0;
+    const stateLabels = Array.from(c.querySelectorAll('[role=tab],.tab,.pill,[data-tab]'))
+      .map((t) => ((t as HTMLElement).innerText || "").replace(/\s+/g, " ").trim())
+      .filter(Boolean).slice(0, 8);
     return {
       index,
       name: c.id || cls.split(" ")[0] || c.tagName.toLowerCase() + "-" + index,
@@ -284,6 +310,15 @@ function topologyScript(): unknown {
         .slice(0, 90),
       layout,
       interaction,
+      display: s.display,
+      gridTemplateColumns: layout === "grid" ? s.gridTemplateColumns : undefined,
+      flexDirection: layout === "flex" ? s.flexDirection : undefined,
+      columnCount: colCount || undefined,
+      gap: (s.gap && s.gap !== "normal") ? s.gap : undefined,
+      paddingPx: s.padding,
+      background: (s.backgroundColor && s.backgroundColor !== "rgba(0, 0, 0, 0)") ? s.backgroundColor : ((s.backgroundImage && s.backgroundImage !== "none") ? "image" : undefined),
+      imageCount: c.querySelectorAll("img,video,svg").length || undefined,
+      states: stateLabels.length ? stateLabels : undefined,
     };
   });
 }

@@ -15,6 +15,16 @@ export interface SectionInfo {
   textPreview: string;
   layout: string; // grid | flex | block
   interaction: string; // static | scroll | click | hover | time
+  // precise layout details captured from the live DOM
+  display?: string;
+  gridTemplateColumns?: string;
+  flexDirection?: string;
+  columnCount?: number;
+  gap?: string;
+  paddingPx?: string;
+  background?: string;
+  imageCount?: number;
+  states?: string[]; // labels of interactive states discovered (tabs/pills)
 }
 
 export interface DesignTokens {
@@ -50,6 +60,8 @@ export interface ExtractionResult {
   videoCount: number;
   navLinks: { text: string; href: string }[];
   extractedAt: string;
+  screenshots?: { desktop?: string; mobile?: string }; // data URLs (base64 png)
+  localAssets?: { remote: string; local: string; kind: string }[]; // filled after download
 }
 
 export interface DesignReport {
