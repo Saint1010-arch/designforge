@@ -189,7 +189,7 @@
       + '<div class="run-cmd">或手动：进入目录后运行 <code>npm install</code> 然后 <code>npm run dev</code></div></div>';
   }
   function bindPreview(root){
-    $(".r-card[data-project]", root).forEach(function(card){
+    $$(".r-card[data-project]", root).forEach(function(card){
       var dir = card.getAttribute("data-project");
       var status = card.querySelector(".preview-status");
       var setStatus = function(msg, kind){ status.classList.remove("hidden"); status.className = "preview-status" + (kind?" "+kind:""); status.innerHTML = msg; };
