@@ -28,19 +28,36 @@ export function resolveLlmConfig(opts: {
 /** Strip markdown code fences and pull the first {...} / [...] JSON block out of text. */
 function extractJson(raw: string): string {
   let s = (raw || "").trim();
-  // remove leading/trailing markdown fences like ```json ... ```
-  const fence = s.match(/^\`\`\`(?:json|JSON)?\s*([\s\S]*?)\s*\`\`\`$/);
-  if (fence) s = fence[1].trim();
-  // if still wrapped, grab the outermost JSON object/array
-  if (!(s.startsWith("{") || s.startsWith("["))) {
-    const i = s.search(/[{[]/);
-    if (i >= 0) {
-      const open = s[i];
-      const close = open === "{" ? "}" : "]";
-      const j = s.lastIndexOf(close);
-      if (j > i) s = s.slice(i, j + 1);
+  // 1) pull out a fenced block anywhere in the text (```json ... ``` or ``` ... ```)
+  const fenceAny = s.match(/\`\`\`(?:json|JSON)?\s*([\s\S]*?)\s*\`\`\`/);
+  if (fenceAny && /[{[]/.test(fenceAny[1])) s = fenceAny[1].trim();
+  // 2) if it already starts clean, done
+  if (s.startsWith("{") || s.startsWith("[")) return balancedSlice(s);
+  // 3) otherwise scan for the first balanced {...} / [...] block (handles prose around JSON)
+  const i = s.search(/[{[]/);
+  if (i >= 0) return balancedSlice(s.slice(i));
+  return s.trim();
+}
+
+/** Return the substring from the start char to its matching close, respecting strings/escapes. */
+function balancedSlice(s: string): string {
+  const open = s[0];
+  if (open !== "{" && open !== "[") return s.trim();
+  const close = open === "{" ? "}" : "]";
+  let depth = 0, inStr = false, esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
     }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === open) depth++;
+    else if (ch === close) { depth--; if (depth === 0) return s.slice(0, i + 1).trim(); }
   }
+  // unbalanced (likely truncated) -> return as-is for the parser to report
   return s.trim();
 }
 
@@ -71,7 +88,7 @@ export class LlmClient {
   private client: OpenAI;
   readonly model: string;
   // params the current model rejects; we drop them and retry.
-  private drop = { temperature: false, responseFormat: false };
+  private drop = { temperature: false, responseFormat: false, maxTokens: false };
 
   constructor(cfg: LlmConfig) {
     this.client = new OpenAI({ apiKey: cfg.apiKey, baseURL: cfg.baseURL });
@@ -82,6 +99,7 @@ export class LlmClient {
     const attempt = async (): Promise<string> => {
       const body: Record<string, unknown> = { model: this.model, messages };
       if (!this.drop.temperature) body.temperature = opts.temperature;
+      if (!this.drop.maxTokens) body.max_tokens = 8192;
       if (opts.json && !this.drop.responseFormat) body.response_format = { type: "json_object" };
       const res = await this.client.chat.completions.create(body as any);
       return (res as any).choices?.[0]?.message?.content || "";
@@ -91,6 +109,7 @@ export class LlmClient {
     } catch (e) {
       let retried = false;
       if (!this.drop.temperature && complainsAbout(e, "temperature")) { this.drop.temperature = true; retried = true; }
+      if (!this.drop.maxTokens && complainsAbout(e, "max_tokens")) { this.drop.maxTokens = true; retried = true; }
       if (opts.json && !this.drop.responseFormat && complainsAbout(e, "response_format")) { this.drop.responseFormat = true; retried = true; }
       if (retried) {
         try { return await attempt(); } catch (e2) { throw friendlyError(e2); }
@@ -113,7 +132,18 @@ export class LlmClient {
     try {
       return JSON.parse(cleaned) as T;
     } catch {
-      throw new Error("\u6a21\u578b\u8fd4\u56de\u7684\u4e0d\u662f\u6709\u6548 JSON\uff08\u5df2\u5c1d\u8bd5\u53bb\u9664\u4ee3\u7801\u5757\uff09\u3002\u8bf7\u6362\u4e00\u4e2a\u66f4\u64c5\u957f\u6307\u4ee4\u9075\u5faa\u7684\u6a21\u578b\uff08\u5982 gpt-4o-mini / deepseek-chat / qwen-plus \u7b49\uff09\u3002");
+      // One repair attempt: hand the bad output back and ask for strict JSON only.
+      try {
+        const fixTxt = await this.create(
+          [
+            { role: "system", content: "You convert text into a single valid JSON value. Output ONLY raw JSON — no prose, no markdown, no code fences. Do not truncate." },
+            { role: "user", content: "Return ONLY the corrected, complete JSON for the following content:\n\n" + txt.slice(0, 12000) },
+          ],
+          { temperature: 0, json: true }
+        );
+        return JSON.parse(extractJson(fixTxt)) as T;
+      } catch { /* fall through to the friendly error */ }
+      throw new Error("\u6a21\u578b\u8fd4\u56de\u7684\u4e0d\u662f\u6709\u6548 JSON\uff08\u5df2\u5c1d\u8bd5\u53bb\u9664\u4ee3\u7801\u5757\u4e0e\u4fee\u590d\uff09\u3002\u53ef\u80fd\u662f\u8f93\u51fa\u88ab\u622a\u65ad\uff08\u5185\u5bb9\u8fc7\u957f\uff09\u6216\u8be5\u4e2d\u8f6c\u63a5\u53e3\u4e0d\u652f\u6301 response_format\u3002\u8bf7\u91cd\u8bd5\uff0c\u6216\u6362\u4e00\u4e2a\u66f4\u64c5\u957f\u6307\u4ee4\u9075\u5faa\u7684\u6a21\u578b\uff08\u5982 gpt-4o-mini / deepseek-chat / qwen-plus \u7b49\uff09\u3002");
     }
   }
 
@@ -133,6 +163,7 @@ export class LlmClient {
         ],
       };
       if (!this.drop.temperature) body.temperature = 0.4;
+      if (!this.drop.maxTokens) body.max_tokens = 8192;
       if (!this.drop.responseFormat) body.response_format = { type: "json_object" };
       const res = await this.client.chat.completions.create(body as any);
       return (res as any).choices?.[0]?.message?.content || "";
