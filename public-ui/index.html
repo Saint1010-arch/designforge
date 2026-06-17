@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DesignForge 设界 — 设计语言分析 · 同款生成 · 视觉融合</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="aurora"></div>
+  <div class="grain"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo-dot"></span>
+      <span class="brand-name">DesignForge<span class="brand-cn">设界</span></span>
+      <span class="brand-tag">design intelligence · 设计智能</span>
+    </div>
+    <div class="key-wrap">
+      <button id="keyToggle" class="key-btn">
+        <span class="key-icon">🔑</span>
+        <span id="keyStatus">设置 API Key</span>
+      </button>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="hero-badge">本地运行 · 自带密钥 · 真实浏览器抓取 · 双语报告</div>
+    <h1 class="hero-title">读懂任何网站与 HTML 的 <span class="grad">设计语言</span><br/>一键 <span class="grad2">同款</span> · <span class="grad3">融合</span> · <span class="grad4">升级锻造</span></h1>
+    <p class="hero-sub">输入网址或上传 HTML，先得到双语设计报告与可复用提示词；再做同款、按权重融合多个来源，或把你的内容一键排成精致的单文件 HTML。</p>
+  </section>
+
+  <main class="container">
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="analyze"><b>分析</b><span>报告 + 提示词</span></button>
+      <button class="tab" data-tab="clone"><b>做同款</b><span>生成可运行项目</span></button>
+      <button class="tab" data-tab="fuse"><b>融合</b><span>双站按权重混合</span></button>
+      <button class="tab" data-tab="html"><b>HTML 锻造</b><span>链接/上传 · 同款升级 · 多文件融合</span></button>
+    </nav>
+
+    <!-- ANALYZE -->
+    <section class="panel active" id="panel-analyze">
+      <div class="card input-card">
+        <label class="field-label">网站地址</label>
+        <div class="url-row">
+          <input class="url-input" id="analyzeUrl" type="url" placeholder="https://stripe.com" />
+          <button class="run-btn" id="analyzeRun"><span>生成报告</span><i>→</i></button>
+        </div>
+        <p class="hint">将启动一个隐藏浏览器抓取页面（约 10–25 秒），随后用你的模型归纳设计语言。</p>
+      </div>
+      <div id="analyzeProgress" class="progress hidden"></div>
+      <div id="analyzeResult" class="result"></div>
+    </section>
+
+    <!-- CLONE -->
+    <section class="panel" id="panel-clone">
+      <div class="card input-card">
+        <label class="field-label">网站地址</label>
+        <div class="url-row">
+          <input class="url-input" id="cloneUrl" type="url" placeholder="https://linear.app" />
+        </div>
+        <label class="field-label mt">定制需求（可选，越具体越好）</label>
+        <textarea class="area-input" id="cloneInstr" placeholder="例如：标题改成「我的产品」，主色换成青色，文案用中文，不照抄原站措辞"></textarea>
+        <div class="actions">
+          <button class="run-btn" id="cloneRun"><span>分析并生成同款</span><i>→</i></button>
+          <span class="actions-note">会先展示报告，再生成可运行的 Next.js 项目</span>
+        </div>
+      </div>
+      <div id="cloneProgress" class="progress hidden"></div>
+      <div id="cloneResult" class="result"></div>
+    </section>
+
+    <!-- FUSE -->
+    <section class="panel" id="panel-fuse">
+      <div class="card input-card">
+        <div class="fuse-grid">
+          <div>
+            <label class="field-label">网站 A</label>
+            <input class="url-input" id="fuseA" type="url" placeholder="https://stripe.com" />
+          </div>
+          <div>
+            <label class="field-label">网站 B</label>
+            <input class="url-input" id="fuseB" type="url" placeholder="https://vercel.com" />
+          </div>
+        </div>
+        <label class="field-label mt">混合权重</label>
+        <div class="weight-row">
+          <span class="weight-tag" id="weightTagA">A 50%</span>
+          <input type="range" id="weight" min="5" max="95" value="50" class="slider" />
+          <span class="weight-tag" id="weightTagB">B 50%</span>
+        </div>
+        <div class="blend-preview" id="blendPreview">
+          <span class="bp-label">混合色板预览</span>
+          <div class="bp-swatches" id="bpSwatches"><span class="bp-empty">输入两个网址后点「预览混合」。</span></div>
+          <button class="ghost-btn" id="previewBtn">预览混合</button>
+        </div>
+        <label class="field-label mt">定制需求（可选）</label>
+        <textarea class="area-input" id="fuseInstr" placeholder="例如：偏向 A 的排版、B 的配色，整体更简洁"></textarea>
+        <div class="actions">
+          <button class="run-btn" id="fuseRun"><span>融合并生成</span><i>→</i></button>
+          <span class="actions-note">会先展示融合报告，再生成新站</span>
+        </div>
+      </div>
+      <div id="fuseProgress" class="progress hidden"></div>
+      <div id="fuseResult" class="result"></div>
+    </section>
+
+    <!-- HTML FORGE -->
+    <section class="panel" id="panel-html">
+      <div class="card input-card">
+        <div class="seg" id="htmlMode">
+          <button class="seg-btn active" data-mode="link" type="button">链接 Link</button>
+          <button class="seg-btn" data-mode="upload" type="button">上传文件 Upload</button>
+          <button class="seg-btn" data-mode="content" type="button">仅内容 Content</button>
+        </div>
+
+        <div class="src-list" id="htmlSources"></div>
+        <div class="src-add">
+          <button class="ghost-btn" id="htmlAddSrc" type="button">＋ 添加来源 Add source</button>
+          <input id="htmlFile" type="file" accept=".html,.htm" multiple hidden />
+          <span class="actions-note" id="htmlSrcNote">添加 1 个来源做分析/同款；添加多个可对比/融合（最多 5 个）。</span>
+        </div>
+
+        <div class="content-wrap hidden" id="htmlContentWrap">
+          <label class="field-label mt">要排版的内容 Content</label>
+          <textarea class="area-input tall" id="htmlContent" placeholder="把你的要点/数据/结论贴进来，例如：&#10;标题：Q2 增长复盘&#10;数据：营收 +24%、留存 81%、NPS 52&#10;结论：聚焦高价值客群、压缩长尾投放"></textarea>
+        </div>
+
+        <details class="opts" open>
+          <summary>设计选项 Design options（全部可调，自由发挥）</summary>
+          <div class="opts-grid">
+            <label class="opt"><span>用途 Purpose</span>
+              <select id="optPurpose">
+                <option value="report">报告 Report</option>
+                <option value="case-study">案例 Case study</option>
+                <option value="showcase">展示 Showcase</option>
+                <option value="landing">落地页 Landing</option>
+                <option value="dashboard">看板 Dashboard</option>
+                <option value="portfolio">作品集 Portfolio</option>
+                <option value="">（不指定）</option>
+              </select>
+            </label>
+            <label class="opt"><span>语言 Language</span>
+              <select id="optLanguage">
+                <option value="bilingual">中英双语</option>
+                <option value="zh">仅中文</option>
+                <option value="en">仅英文</option>
+              </select>
+            </label>
+            <label class="opt"><span>风格基调 Tone</span>
+              <select id="optTone">
+                <option value="">（自动）</option>
+                <option value="professional">专业 沉稳</option>
+                <option value="playful">活泼 年轻</option>
+                <option value="luxury">高级 奢华</option>
+                <option value="techy">科技 极客</option>
+                <option value="editorial">杂志 编辑感</option>
+                <option value="minimal">极简</option>
+                <option value="bold">大胆 冲击</option>
+              </select>
+            </label>
+            <label class="opt"><span>配色方向 Color</span>
+              <select id="optColor">
+                <option value="keep">沿用来源</option>
+                <option value="dark">深色</option>
+                <option value="light">浅色</option>
+                <option value="vibrant">高饱和炫彩</option>
+                <option value="pastel">柔和马卡龙</option>
+                <option value="mono">单色高级</option>
+              </select>
+            </label>
+            <label class="opt"><span>信息密度 Density</span>
+              <select id="optDensity">
+                <option value="balanced">均衡</option>
+                <option value="airy">疏朗留白</option>
+                <option value="compact">紧凑</option>
+              </select>
+            </label>
+            <label class="opt"><span>动效 Animation</span>
+              <select id="optAnim">
+                <option value="subtle">克制</option>
+                <option value="rich">丰富</option>
+                <option value="none">无</option>
+              </select>
+            </label>
+            <label class="opt"><span>字体偏好 Font</span>
+              <input id="optFont" type="text" placeholder="如 Inter / 思源黑体 / serif" />
+            </label>
+            <label class="opt"><span>指定栏目 Sections</span>
+              <input id="optSections" type="text" placeholder="如 封面,概览,数据,结论,致谢" />
+            </label>
+            <label class="opt wide"><span>创意度 Creativity <b id="creLabel">0.6</b></span>
+              <input id="optCreativity" type="range" min="0" max="1" step="0.1" value="0.6" class="slider mini" />
+            </label>
+            <label class="opt toggle"><input id="optUpgrade" type="checkbox" checked /> <span>升级模式：比原版更强、有区别（不照抄）</span></label>
+          </div>
+          <label class="field-label mt">额外要求 / 自定义提示词（可选）</label>
+          <textarea class="area-input" id="optInstr" placeholder="想加什么都行：例如「标题用我的公司名」「右上角放 logo 占位」「加一个对比表格」「整体更像苹果发布会风格」"></textarea>
+        </details>
+
+        <div class="actions wrap">
+          <button class="run-btn" id="htmlAnalyzeRun" type="button"><span>分析 + 报告</span><i>→</i></button>
+          <button class="run-btn alt" id="htmlCloneRun" type="button"><span>做同款（升级版 .html）</span><i>→</i></button>
+          <button class="run-btn alt" id="htmlComposeRun" type="button"><span>用内容生成 .html</span><i>→</i></button>
+          <button class="run-btn alt" id="htmlCompareRun" type="button"><span>多文件对比</span><i>→</i></button>
+          <button class="run-btn alt" id="htmlFuseRun" type="button"><span>多文件融合 .html</span><i>→</i></button>
+        </div>
+        <p class="hint">分析/同款只用第 1 个来源；对比/融合用全部来源。生成的 .html 会存到运行目录的 designforge-out。</p>
+      </div>
+      <div id="htmlProgress" class="progress hidden"></div>
+      <div id="htmlResult" class="result"></div>
+    </section>
+
+  </main>
+
+  <footer class="foot">
+    <span>DesignForge 设界 · 纯本地运行 · API Key 只存在你的浏览器，绝不上传或保存</span>
+  </footer>
+
+  <!-- API key modal -->
+  <div class="modal-mask hidden" id="keyModal">
+    <div class="modal">
+      <h3>设置你的大模型 API Key</h3>
+      <p class="modal-sub">仅保存在此浏览器（localStorage），请求时直接发往你填写的接口，本工具不会上传或记录。</p>
+      <label class="field-label">API Key</label>
+      <input class="url-input" id="apiKey" type="password" placeholder="sk-..." />
+      <div class="modal-grid">
+        <div>
+          <label class="field-label">Base URL（可选）</label>
+          <input class="url-input" id="baseUrl" type="text" placeholder="https://api.openai.com/v1" />
+        </div>
+        <div>
+          <label class="field-label">模型</label>
+          <div class="model-row">
+            <select class="url-input" id="modelSelect"><option value="">（先拉取或手动填写）</option></select>
+            <button class="ghost-btn" id="fetchModels" type="button">拉取模型</button>
+          </div>
+          <input class="url-input mt-sm" id="model" type="text" placeholder="gpt-4o-mini" />
+          <p class="hint" id="modelHint">填好 Key 和 Base URL 后点「拉取模型」自动列出；也可直接手填。</p>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="ghost-btn" id="keyCancel" type="button">取消</button>
+        <button class="run-btn" id="keySave" type="button"><span>保存</span></button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

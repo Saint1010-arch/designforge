@@ -1,0 +1,49 @@
+{
+  "name": "designforge",
+  "version": "0.1.0",
+  "description": "DesignForge (设界): analyze any website or HTML's design language, then generate same-style pages, fuse multiple sources by weight, and forge polished single-file HTML — local, BYOK, real headless browser, bilingual reports.",
+  "type": "module",
+  "bin": {
+    "designforge": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "templates",
+    "public-ui",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "website",
+    "clone",
+    "design",
+    "ai",
+    "llm",
+    "playwright",
+    "scaffolding",
+    "cli"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "playwright": "^1.49.0",
+    "openai": "^4.77.0",
+    "picocolors": "^1.1.1",
+    "ora": "^8.1.1",
+    "prompts": "^2.4.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "tsx": "^4.19.2",
+    "@types/node": "^22.10.7",
+    "@types/prompts": "^2.4.9"
+  }
+}

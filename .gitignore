@@ -1,0 +1,30 @@
+# deps
+node_modules/
+
+# build output
+dist/
+
+# local env / secrets
+.env
+.env.local
+*.local
+
+# logs / runtime
+*.log
+*.pid
+srv.pid
+t-out.log
+
+# generated output dirs
+out/
+designforge-out/
+designforge-output/
+
+# release artifacts (too large for git; ship via Releases)
+release/designforge-win/
+release/*.zip
+release/siteforge-win/
+
+# os cruft
+.DS_Store
+Thumbs.db
