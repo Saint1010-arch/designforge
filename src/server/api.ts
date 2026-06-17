@@ -86,10 +86,13 @@ async function readBody(req: http.IncomingMessage): Promise<Record<string, unkno
 }
 
 function llmFrom(body: Record<string, unknown>): LlmClient {
+  const mt = typeof body.maxTokens === "number" ? (body.maxTokens as number)
+    : (body.maxTokens ? parseInt(String(body.maxTokens), 10) : undefined);
   const cfg = resolveLlmConfig({
     apiKey: (body.apiKey as string) || undefined,
     baseURL: (body.baseUrl as string) || undefined,
     model: (body.model as string) || undefined,
+    maxTokens: Number.isFinite(mt) ? mt : undefined,
   });
   return new LlmClient(cfg);
 }

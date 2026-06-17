@@ -8,7 +8,7 @@
   };
 
   // ---- config (BYOK, localStorage only) ----
-  let cfg = { apiKey:"", model:"gpt-4o-mini", baseUrl:"" };
+  let cfg = { apiKey:"", model:"gpt-4o-mini", baseUrl:"", maxTokens:16384 };
   try { cfg = { ...cfg, ...JSON.parse(store.get() || "{}") }; } catch {}
   function refreshKeyBtn(){
     const set = !!cfg.apiKey;
@@ -23,6 +23,7 @@
     $("#apiKey").value=cfg.apiKey;
     $("#model").value=cfg.model;
     $("#baseUrl").value=cfg.baseUrl;
+    if($("#maxTokens")) $("#maxTokens").value = cfg.maxTokens || 16384;
     syncModelSelect(cfg.model);
     modal.classList.remove("hidden");
   }
@@ -32,7 +33,8 @@
   modal.onclick = (e)=>{ if(e.target===modal) closeModal(); };
   $("#keySave").onclick = () => {
     const model = ($("#model").value.trim() || $("#modelSelect").value.trim() || "gpt-4o-mini");
-    cfg = { apiKey:$("#apiKey").value.trim(), model, baseUrl:$("#baseUrl").value.trim() };
+    var mt = $("#maxTokens") ? parseInt($("#maxTokens").value, 10) : 16384; if(!(mt>=1024 && mt<=65536)) mt = 16384;
+    cfg = { apiKey:$("#apiKey").value.trim(), model, baseUrl:$("#baseUrl").value.trim(), maxTokens: mt };
     store.set(JSON.stringify(cfg));
     refreshKeyBtn(); closeModal();
   };

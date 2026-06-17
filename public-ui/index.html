@@ -242,6 +242,9 @@
           <p class="hint" id="modelHint">填好 Key 和 Base URL 后点「拉取模型」自动列出；也可直接手填。</p>
         </div>
       </div>
+      <label class="field-label">单次最大输出 Tokens（高级，默认 16384）</label>
+      <input class="url-input" id="maxTokens" type="number" min="1024" max="65536" step="1024" placeholder="16384" />
+      <p class="hint">生成整页代码时需要较大值；若接口报“超出模型上限”会自动减半重试。太小易导致输出被截断。</p>
       <div class="modal-actions">
         <button class="ghost-btn" id="keyCancel" type="button">取消</button>
         <button class="run-btn" id="keySave" type="button"><span>保存</span></button>

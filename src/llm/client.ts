@@ -4,12 +4,14 @@ export interface LlmConfig {
   apiKey: string;
   baseURL?: string;
   model: string;
+  maxTokens?: number; // user override for the long-output ceiling
 }
 
 export function resolveLlmConfig(opts: {
   apiKey?: string;
   baseURL?: string;
   model?: string;
+  maxTokens?: number;
 }): LlmConfig {
   const apiKey =
     opts.apiKey || process.env.DESIGNFORGE_API_KEY || process.env.OPENAI_API_KEY;
@@ -22,7 +24,9 @@ export function resolveLlmConfig(opts: {
   const baseURL =
     opts.baseURL || process.env.DESIGNFORGE_BASE_URL || process.env.OPENAI_BASE_URL;
   const model = opts.model || process.env.DESIGNFORGE_MODEL || "gpt-4o-mini";
-  return { apiKey, baseURL, model };
+  const envMax = process.env.DESIGNFORGE_MAX_TOKENS ? parseInt(process.env.DESIGNFORGE_MAX_TOKENS, 10) : undefined;
+  const maxTokens = opts.maxTokens || (Number.isFinite(envMax) ? envMax : undefined);
+  return { apiKey, baseURL, model, maxTokens };
 }
 
 /** Strip markdown code fences and pull the first {...} / [...] JSON block out of text. */
@@ -61,6 +65,13 @@ function balancedSlice(s: string): string {
   return s.trim();
 }
 
+/** Whether the error means our requested max_tokens is larger than the model allows. */
+function maxTokensTooLarge(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return /max_tokens|max_completion_tokens|maximum.*token|token.*exceed|exceed.*(context|limit)|too (large|many).*token/.test(msg)
+    && /(exceed|too (large|many)|greater than|larger than|less than or equal|maximum)/.test(msg);
+}
+
 /** Whether a thrown provider error complains about an unsupported param. */
 function complainsAbout(err: unknown, param: string): boolean {
   const msg = err instanceof Error ? err.message : String(err);
@@ -89,17 +100,22 @@ export class LlmClient {
   readonly model: string;
   // params the current model rejects; we drop them and retry.
   private drop = { temperature: false, responseFormat: false, maxTokens: false };
+  // ceiling for long outputs (page.tsx / html); halved on "exceeds limit" errors.
+  private longCeiling: number;
 
   constructor(cfg: LlmConfig) {
     this.client = new OpenAI({ apiKey: cfg.apiKey, baseURL: cfg.baseURL });
     this.model = cfg.model;
+    const want = cfg.maxTokens && cfg.maxTokens > 0 ? cfg.maxTokens : 16384;
+    this.longCeiling = Math.min(Math.max(want, 1024), 65536);
   }
 
-  private async create(messages: { role: "system" | "user"; content: string }[], opts: { temperature: number; json: boolean }): Promise<string> {
+  private async create(messages: { role: "system" | "user"; content: string }[], opts: { temperature: number; json: boolean; maxTokens?: number }): Promise<string> {
+    let budget = opts.maxTokens && opts.maxTokens > 0 ? Math.min(opts.maxTokens, this.longCeiling) : this.longCeiling;
     const attempt = async (): Promise<string> => {
       const body: Record<string, unknown> = { model: this.model, messages };
       if (!this.drop.temperature) body.temperature = opts.temperature;
-      if (!this.drop.maxTokens) body.max_tokens = 8192;
+      if (!this.drop.maxTokens) body.max_tokens = budget;
       if (opts.json && !this.drop.responseFormat) body.response_format = { type: "json_object" };
       const res = await this.client.chat.completions.create(body as any);
       return (res as any).choices?.[0]?.message?.content || "";
@@ -108,8 +124,14 @@ export class LlmClient {
       return await attempt();
     } catch (e) {
       let retried = false;
+      // If our requested budget is over the model ceiling, halve it (down to 1024) and retry.
+      if (!this.drop.maxTokens && maxTokensTooLarge(e) && budget > 1024) {
+        budget = Math.max(1024, Math.floor(budget / 2));
+        this.longCeiling = Math.min(this.longCeiling, budget);
+        retried = true;
+      }
       if (!this.drop.temperature && complainsAbout(e, "temperature")) { this.drop.temperature = true; retried = true; }
-      if (!this.drop.maxTokens && complainsAbout(e, "max_tokens")) { this.drop.maxTokens = true; retried = true; }
+      if (!this.drop.maxTokens && !retried && complainsAbout(e, "max_tokens")) { this.drop.maxTokens = true; retried = true; }
       if (opts.json && !this.drop.responseFormat && complainsAbout(e, "response_format")) { this.drop.responseFormat = true; retried = true; }
       if (retried) {
         try { return await attempt(); } catch (e2) { throw friendlyError(e2); }
@@ -118,7 +140,7 @@ export class LlmClient {
     }
   }
 
-  async json<T>(system: string, user: string): Promise<T> {
+  async json<T>(system: string, user: string, maxTokens?: number): Promise<T> {
     // nudge plain-text JSON for models that ignore response_format
     const sys = system + "\n\nIMPORTANT: Respond with raw JSON only. No markdown, no code fences, no commentary.";
     const txt = await this.create(
@@ -126,7 +148,7 @@ export class LlmClient {
         { role: "system", content: sys },
         { role: "user", content: user },
       ],
-      { temperature: 0.4, json: true }
+      { temperature: 0.4, json: true, maxTokens }
     );
     const cleaned = extractJson(txt);
     try {
