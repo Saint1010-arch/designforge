@@ -11,7 +11,7 @@ import { chromium } from "playwright";
 const SYSTEM = `You are an expert front-end engineer. You generate a single-file React
 homepage (default export) that recreates the VISUAL STYLE of a reference site as an
 ORIGINAL same-style page. You output ONLY JSON. The component must be self-contained,
-use inline Tailwind utility classes, and not import anything except React. Use the
+use inline Tailwind utility classes, and import NOTHING except React (the only allowed\nimport is React). NEVER import icon/animation/UI libraries such as lucide-react, react-icons,\n@heroicons, framer-motion, swiper, clsx, etc. For icons, write inline <svg> elements or use emoji.\nFor animation use CSS/Tailwind only. Use the
 provided design tokens (colors, fonts, radii) faithfully. Recreate the section rhythm
 from the topology. Use placeholder text in the same language/topic, and reference local
 asset paths under /assets/ for any images you include. Keep it production-clean.`;
@@ -105,6 +105,31 @@ Return JSON:
   }
 }
 
+const KNOWN_VERSIONS: Record<string, string> = {
+  "lucide-react": "^0.469.0",
+  "framer-motion": "^11.15.0",
+  "react-icons": "^5.4.0",
+  "clsx": "^2.1.1",
+  "@heroicons/react": "^2.2.0",
+  "swiper": "^11.1.15",
+};
+
+/** Find third-party package imports in the generated page (excluding react / next / relative paths). */
+function detectExternalDeps(code: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const re = /import[^;]*?from\s*['\"]([^'\"]+)['\"]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(code))) {
+    const spec = m[1];
+    if (spec.startsWith(".") || spec.startsWith("/") || spec.startsWith("@/")) continue;
+    if (spec === "react" || spec === "react-dom" || spec.startsWith("next")) continue;
+    // package name: handle scoped (@scope/name) and subpaths (pkg/sub)
+    const pkg = spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : spec.split("/")[0];
+    if (pkg) out[pkg] = KNOWN_VERSIONS[pkg] || "latest";
+  }
+  return out;
+}
+
 function scaffold(outDir: string, x: ExtractionResult, gen: GenResult) {
   const w = (rel: string, content: string) => {
     const p = path.join(outDir, rel);
@@ -117,7 +142,7 @@ function scaffold(outDir: string, x: ExtractionResult, gen: GenResult) {
     version: "0.1.0",
     private: true,
     scripts: { dev: "next dev", build: "next build", start: "next start" },
-    dependencies: { next: "^15.1.6", react: "^19.0.0", "react-dom": "^19.0.0" },
+    dependencies: { next: "^15.1.6", react: "^19.0.0", "react-dom": "^19.0.0", ...detectExternalDeps(gen.pageTsx) },
     devDependencies: {
       typescript: "^5.7.3",
       "@types/node": "^22.10.7",
@@ -142,7 +167,7 @@ function scaffold(outDir: string, x: ExtractionResult, gen: GenResult) {
   }, null, 2));
 
   w("postcss.config.mjs", "const config = { plugins: [\"@tailwindcss/postcss\"] };\nexport default config;\n");
-  w("next.config.ts", "import type { NextConfig } from \"next\";\nconst nextConfig: NextConfig = { reactStrictMode: true };\nexport default nextConfig;\n");
+  w("next.config.ts", "import type { NextConfig } from \"next\";\nimport path from \"path\";\nconst nextConfig: NextConfig = { reactStrictMode: true, outputFileTracingRoot: path.resolve(__dirname) };\nexport default nextConfig;\n");
   w("next-env.d.ts", "/// <reference types=\"next\" />\n/// <reference types=\"next/image-types/global\" />\n");
   w(".gitignore", "node_modules\n.next\nout\n");
 
